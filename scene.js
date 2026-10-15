@@ -140,10 +140,31 @@ function init(){
   const ringMaterial=new THREE.MeshBasicMaterial({color:0xb5f48c,transparent:true,opacity:0,depthWrite:false,side:THREE.DoubleSide});
   baseRing=new THREE.Mesh(ringGeometry,ringMaterial);baseRing.rotation.x=-Math.PI/2;baseRing.position.y=-.82;root.add(baseRing);
   const loader=new GLTFLoader();
-  loader.load('./assets/coventry-house.glb',prepareModel,undefined,e=>{
+  // GitHub stores the optimized GLB as binary segments, avoiding large single-file
+  // uploads. Rejoin the original exact bytes before parsing; never duplicate the model.
+  const MODEL_PART_COUNT=26;
+  const MODEL_BYTE_LENGTH=19132368;
+  const loadOptimizedHouse=async()=>{
+   const parts=await Promise.all(Array.from({length:MODEL_PART_COUNT},async(_,i)=>{
+    const path=`./assets/coventry-house.part${String(i).padStart(2,'0')}`;
+    const response=await fetch(path);
+    if(!response.ok)throw new Error(`Missing model asset: ${path} (${response.status})`);
+    const array=new Uint8Array(await response.arrayBuffer());
+    const expected=i===MODEL_PART_COUNT-1?382368:750000;
+    if(array.byteLength!==expected)throw new Error(`Incomplete model asset: ${path}`);
+    return array;
+   }));
+   const combined=new Uint8Array(MODEL_BYTE_LENGTH);
+   let offset=0;
+   for(const bytes of parts){combined.set(bytes,offset);offset+=bytes.byteLength;}
+   if(offset!==MODEL_BYTE_LENGTH||new DataView(combined.buffer).getUint32(0,true)!==0x46546c67||new DataView(combined.buffer).getUint32(8,true)!==MODEL_BYTE_LENGTH)throw new Error('Invalid house GLB');
+   loader.parse(combined.buffer,'./assets/',prepareModel,onModelError);
+  };
+  function onModelError(e){
    console.warn('3D model could not load. Static house artwork remains visible.',e);
    if(renderer){renderer.domElement.remove();renderer.dispose();renderer=null;}
-  });
+  }
+  loadOptimizedHouse().catch(onModelError);
   resizeObserver=new ResizeObserver(()=>{
    if(!renderer)return;
    const width=Math.max(container.clientWidth,2),height=Math.max(container.clientHeight,2);
